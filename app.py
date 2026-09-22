@@ -22,7 +22,7 @@ GOOGLE_SHEET_NAME = "Singlish AI Experiment Results"
 # Column order written to the Google Sheet - kept as a constant so the header
 # row and each appended row are guaranteed to line up.
 SHEET_HEADER = [
-    "session_id", "timestamp", "age",
+    "session_id", "timestamp", "age", "gender", "grew_up_in_singapore",
     "pre_prior_belief", "pre_frequency_singlish",
     "post_naturalness", "post_grammar_syntax", "post_vocabulary_context", "post_overall_opinion",
     "chat_transcript",
@@ -151,6 +151,8 @@ def save_data_to_gsheet(post_data):
         st.session_state.session_id,
         datetime.now().isoformat(),
         st.session_state.pre_test_data.get("age"),
+        st.session_state.pre_test_data.get("gender"),
+        st.session_state.pre_test_data.get("grew_up_in_singapore"),
         st.session_state.pre_test_data.get("prior_belief"),
         st.session_state.pre_test_data.get("frequency_singlish"),
         post_data.get("naturalness"),
@@ -171,6 +173,14 @@ if st.session_state.step == "pre_test":
             "What is your age?",
             min_value=12, max_value=100, value=21, step=1
         )
+        gender = st.radio(
+            "What is your gender?",
+            options=["Male", "Female"],
+        )
+        grew_up_in_singapore = st.radio(
+            "Did you grow up in Singapore?",
+            options=["Yes", "No"],
+        )
         prior_belief = st.slider(
             "Do you believe current AI models can speak natural, authentic Singlish?",
             min_value=1, max_value=5, value=3,
@@ -186,6 +196,8 @@ if st.session_state.step == "pre_test":
         if submitted:
             st.session_state.pre_test_data = {
                 "age": int(age),
+                "gender": gender,
+                "grew_up_in_singapore": grew_up_in_singapore,
                 "prior_belief": prior_belief,
                 "frequency_singlish": frequency_singlish
             }
