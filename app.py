@@ -171,7 +171,7 @@ if st.session_state.step == "pre_test":
     with st.form("pre_test_form"):
         age = st.number_input(
             "What is your age?",
-            min_value=12, max_value=100, value=21, step=1
+            min_value=21, max_value=100, value=21, step=1
         )
         gender = st.radio(
             "What is your gender?",
@@ -180,6 +180,8 @@ if st.session_state.step == "pre_test":
         grew_up_in_singapore = st.radio(
             "Did you grow up in Singapore?",
             options=["Yes", "No"],
+            help="Growing up in Singapore means having spent at least 10 years of your "
+                 "childhood and/or teenage years living in Singapore."
         )
         prior_belief = st.slider(
             "Do you believe current AI models can speak natural, authentic Singlish?",
