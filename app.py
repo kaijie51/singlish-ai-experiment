@@ -184,7 +184,7 @@ if st.session_state.step == "pre_test":
                  "childhood and/or teenage years living in Singapore."
         )
         prior_belief = st.slider(
-            "Do you believe current AI models can speak natural, authentic Singlish?",
+            "Do you believe current AI models can communicate natural, authentic Singlish?",
             min_value=1, max_value=5, value=3,
             help="1 = Strongly Disagree, 5 = Strongly Agree"
         )
