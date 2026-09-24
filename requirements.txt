@@ -2,3 +2,9 @@ streamlit
 anthropic
 gspread
 google-auth
+streamlit-drawable-canvas
+pypdf
+pypdfium2
+reportlab
+pillow
+numpy

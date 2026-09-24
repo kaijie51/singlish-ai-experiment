@@ -1,12 +1,25 @@
 #& C:\Users\Asus\AppData\Local\Python\pythoncore-3.14-64\python.exe -m streamlit run C:\Users\Asus\Downloads\singlish-ai-experiment\app.py
 
+import io
 import json
+import smtplib
 import uuid
 from datetime import datetime
+from email.message import EmailMessage
+from pathlib import Path
+
 import streamlit as st
 import anthropic
 import gspread
+import numpy as np
+import pypdfium2 as pdfium
 from google.oauth2.service_account import Credentials
+from PIL import Image
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import ArrayObject, NameObject
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas as pdf_canvas
+from streamlit_drawable_canvas import st_canvas
 
 # ----------------- Configuration & Initialization -----------------
 st.set_page_config(page_title="Singlish AI Evaluation Experiment", layout="centered")
@@ -19,10 +32,45 @@ CLAUDE_MODEL = "claude-opus-5"
 # from your secrets - see README / deployment notes at the bottom of this file.
 GOOGLE_SHEET_NAME = "Singlish AI Experiment Results"
 
+# Blank IRB-approved consent form that each participant signs before starting.
+CONSENT_TEMPLATE = Path(__file__).parent / "IRB Forms" / "IRB-Tan_Kai_Jie_Template.pdf"
+
+# Signed copies that could not be emailed land here so a consent record is
+# never lost just because the network or the mail server was unavailable.
+LOCAL_CONSENT_FALLBACK = Path(__file__).parent / "signed_consents"
+
+# Signed consent forms are emailed to the researcher as PDF attachments.
+# Gmail's SMTP takes an App Password, which needs no OAuth consent screen and
+# does not expire - unlike an OAuth refresh token, which Google invalidates
+# every 7 days for an unpublished app.
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+
+# Geometry of the signature row on page 4 of the consent form, in PDF points
+# from the bottom-left of the A4 page. Measured off the rendered template: the
+# printed rule sits at y=315.6, so signed content baselines just above it.
+CONSENT_SIGNATURE_PAGE = 3
+SIGNATURE_ROW_BASELINE = 319.0
+NAME_FIELD_X = 40.0
+DATE_FIELD_X = 385.0
+SIGNATURE_FIELD_BOX = (192.0, 366.0)  # left, right bounds of the "Signature" rule
+SIGNATURE_MAX_HEIGHT = 26.0           # keeps a tall signature clear of the paragraph above
+
+# The template ships empty AcroForm fields on the signature row. They are
+# dropped from the signed copy so nobody can type over a signature that has
+# already been given.
+PARTICIPANT_FORM_FIELDS = {"Name of Participant", "Signature", "Date"}
+
 # Column order written to the Google Sheet - kept as a constant so the header
 # row and each appended row are guaranteed to line up.
+#
+# The participant's name is deliberately absent. Under the approved ICF the
+# signed consent PDF is the only non-anonymous record; session_id is the sole
+# key linking it to these responses, which is what makes a withdrawal request
+# actionable without putting names in the results set.
 SHEET_HEADER = [
-    "session_id", "timestamp", "age", "gender", "grew_up_in_singapore",
+    "session_id", "timestamp", "consent_signed_at", "consent_record",
+    "age", "gender", "grew_up_in_singapore",
     "pre_prior_belief", "pre_frequency_singlish",
     "post_naturalness", "post_grammar_syntax", "post_vocabulary_context", "post_overall_opinion",
     "chat_transcript",
@@ -33,13 +81,15 @@ SHEET_HEADER = [
 # must survive between reruns (current phase, chat log, survey answers, etc.)
 # has to live in st.session_state instead of a plain local variable.
 if "step" not in st.session_state:
-    st.session_state.step = "pre_test"
+    st.session_state.step = "consent"
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "pre_test_data" not in st.session_state:
     st.session_state.pre_test_data = {}
+if "consent" not in st.session_state:
+    st.session_state.consent = {}
 
 # ----------------- System Prompt (RISEN format) -----------------
 # RISEN = Role, Instructions, Steps, End goal, Narrowing (constraints).
@@ -50,7 +100,8 @@ SYSTEM_INSTRUCTION = """
 Role:
 You are a native Singaporean speaking casually in everyday Singlish, chatting with a friend. I
 want you to be friendly, as sometimes the use of discourse particles like "lah", "leh", "lor",
-"meh", and "sia" can make you sound aggressive or sarcastic, so use them sparingly and only when appropriate.
+"meh", and "sia" can make you sound aggressive or sarcastic, so use them sparingly and only when 
+appropriate.
 
 Instructions:
 Reply to the user's messages the way an ordinary Singaporean would text or speak in an
@@ -146,12 +197,165 @@ def get_results_worksheet():
     return worksheet
 
 
+@st.cache_data(show_spinner=False)
+def render_consent_preview(scale: float = 1.8) -> list[bytes]:
+    """Render the blank consent form to PNGs so participants can read it in the
+    browser.
+
+    Streamlit has no native PDF viewer, and Chrome blocks PDFs embedded from
+    `data:` iframes, so rasterising the pages is the only display path that
+    works for every participant regardless of browser.
+    """
+    document = pdfium.PdfDocument(str(CONSENT_TEMPLATE))
+    try:
+        pages = []
+        for page in document:
+            buffer = io.BytesIO()
+            page.render(scale=scale).to_pil().convert("RGB").save(buffer, format="PNG")
+            pages.append(buffer.getvalue())
+        return pages
+    finally:
+        document.close()
+
+
+def signature_to_png(image_data) -> bytes | None:
+    """Convert the drawable-canvas RGBA array into a tightly cropped PNG.
+
+    Returns None when the canvas holds no strokes, which is how an empty
+    signature is detected: the canvas background is fully transparent, so any
+    non-zero alpha means the participant actually drew something.
+    """
+    if image_data is None:
+        return None
+
+    image = Image.fromarray(np.asarray(image_data, dtype=np.uint8), mode="RGBA")
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        return None
+
+    buffer = io.BytesIO()
+    image.crop(bbox).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _drop_participant_form_fields(writer: PdfWriter, page) -> None:
+    """Remove the empty Name/Signature/Date widgets from the signed page, and
+    their now-orphaned entries in the document-wide AcroForm field list.
+    """
+    def is_participant_field(ref) -> bool:
+        return ref.get_object().get("/T") in PARTICIPANT_FORM_FIELDS
+
+    annotations = page.get("/Annots")
+    if annotations:
+        page[NameObject("/Annots")] = ArrayObject(
+            [ref for ref in annotations.get_object() if not is_participant_field(ref)]
+        )
+
+    acroform = writer.root_object.get("/AcroForm")
+    if acroform is not None:
+        acroform = acroform.get_object()
+        if "/Fields" in acroform:
+            acroform[NameObject("/Fields")] = ArrayObject(
+                [ref for ref in acroform["/Fields"].get_object()
+                 if not is_participant_field(ref)]
+            )
+
+
+def build_signed_consent_pdf(participant_name: str, signed_on: datetime,
+                             signature_png: bytes) -> bytes:
+    """Stamp the participant's name, signature, and date onto page 4 of the
+    IRB consent template and return the signed PDF as bytes.
+
+    The signature is drawn into the page's content stream rather than added as
+    a form field, so the signed record cannot be edited afterwards in a viewer.
+    """
+    template = PdfReader(str(CONSENT_TEMPLATE))
+    page_box = template.pages[CONSENT_SIGNATURE_PAGE].mediabox
+    page_size = (float(page_box.width), float(page_box.height))
+
+    overlay_buffer = io.BytesIO()
+    overlay = pdf_canvas.Canvas(overlay_buffer, pagesize=page_size)
+
+    overlay.setFont("Helvetica", 10)
+    overlay.drawString(NAME_FIELD_X, SIGNATURE_ROW_BASELINE, participant_name)
+    overlay.drawString(DATE_FIELD_X, SIGNATURE_ROW_BASELINE, signed_on.strftime("%d %b %Y"))
+
+    signature = ImageReader(io.BytesIO(signature_png))
+    source_width, source_height = signature.getSize()
+    box_left, box_right = SIGNATURE_FIELD_BOX
+    box_width = box_right - box_left
+    scale = min(box_width / source_width, SIGNATURE_MAX_HEIGHT / source_height)
+    width, height = source_width * scale, source_height * scale
+    overlay.drawImage(
+        signature,
+        box_left + (box_width - width) / 2,
+        SIGNATURE_ROW_BASELINE,
+        width=width,
+        height=height,
+        mask="auto",
+    )
+
+    overlay.showPage()
+    overlay.save()
+    overlay_buffer.seek(0)
+
+    writer = PdfWriter(clone_from=template)
+    page = writer.pages[CONSENT_SIGNATURE_PAGE]
+    page.merge_page(PdfReader(overlay_buffer).pages[0])
+    _drop_participant_form_fields(writer, page)
+
+    signed_buffer = io.BytesIO()
+    writer.write(signed_buffer)
+    return signed_buffer.getvalue()
+
+
+def archive_consent_pdf(pdf_bytes: bytes, filename: str, session_id: str) -> str:
+    """Email the signed consent form to the researcher as a PDF attachment.
+
+    Returns a short record of where the form ended up, which is written to the
+    results sheet so a failed send is visible in the data rather than silent.
+    Falls back to local disk on any failure - a participant must never be
+    blocked from taking part, and a consent form must never be discarded.
+    """
+    try:
+        config = get_secret("email")
+        if not config:
+            raise RuntimeError("[email] is not configured in secrets")
+
+        message = EmailMessage()
+        message["Subject"] = f"Signed consent form - participant {session_id}"
+        message["From"] = config["sender"]
+        message["To"] = config["recipient"]
+        message.set_content(
+            f"Participant {session_id} signed the consent form on "
+            f"{datetime.now().strftime('%d %b %Y at %H:%M')}.\n\n"
+            "The signed form is attached."
+        )
+        message.add_attachment(
+            pdf_bytes, maintype="application", subtype="pdf", filename=filename
+        )
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(config["sender"], config["app_password"])
+            smtp.send_message(message)
+        return f"emailed:{config['recipient']}"
+    except Exception as exc:  # noqa: BLE001 - any failure must fall back to disk
+        failure = f"{type(exc).__name__}: {exc}"[:200]
+
+    LOCAL_CONSENT_FALLBACK.mkdir(exist_ok=True)
+    (LOCAL_CONSENT_FALLBACK / filename).write_bytes(pdf_bytes)
+    return f"local:{filename} ({failure})"
+
+
 def save_data_to_gsheet(post_data):
     """Append one participant's pre-test, post-test, and transcript data as a new row."""
     worksheet = get_results_worksheet()
     worksheet.append_row([
         st.session_state.session_id,
         datetime.now().isoformat(),
+        st.session_state.consent.get("signed_at"),
+        st.session_state.consent.get("record"),
         st.session_state.pre_test_data.get("age"),
         st.session_state.pre_test_data.get("gender"),
         st.session_state.pre_test_data.get("grew_up_in_singapore"),
@@ -165,9 +369,94 @@ def save_data_to_gsheet(post_data):
     ])
 
 
+# ----------------- Phase 0: Informed Consent -----------------
+if st.session_state.step == "consent":
+    st.title("Informed Consent")
+    st.markdown(
+        "Before taking part, please read the study information sheet below and "
+        "sign the consent form. Your participation is voluntary and you may stop "
+        "at any time."
+    )
+
+    st.download_button(
+        "Download a copy of the information sheet (PDF)",
+        data=CONSENT_TEMPLATE.read_bytes(),
+        file_name=CONSENT_TEMPLATE.name,
+        mime="application/pdf",
+    )
+
+    with st.expander("Read the study information sheet", expanded=True):
+        for page_png in render_consent_preview():
+            st.image(page_png, width="stretch")
+
+    st.markdown("---")
+    st.subheader("Sign to take part")
+
+    participant_name = st.text_input("Your full name (as you would sign it)")
+    st.caption(f"Date: {datetime.now().strftime('%d %b %Y')}")
+
+    st.markdown("**Draw your signature in the box below**")
+    # background_color defaults to transparent, so the returned alpha channel
+    # contains only the participant's strokes - that is what signature_to_png()
+    # crops to, and how an untouched canvas is told apart from a signed one.
+    signature_canvas = st_canvas(
+        stroke_width=3,
+        stroke_color="#111111",
+        height=150,
+        width=600,
+        drawing_mode="freedraw",
+        return_image_data=True,
+        key="signature_canvas",
+    )
+    st.caption("Use your mouse, or your finger on a touchscreen. Use the toolbar above the box to undo or clear.")
+
+    agreed = st.checkbox(
+        "I have read and understand the information and procedures in the study "
+        "information sheet. My questions have been answered to my satisfaction, and "
+        "I am participating in this study of my own free will."
+    )
+
+    if st.button("Sign and begin the study", type="primary"):
+        signature_png = signature_to_png(
+            signature_canvas.image_data if signature_canvas is not None else None
+        )
+        if not participant_name.strip():
+            st.warning("Please enter your full name.")
+        elif signature_png is None:
+            st.warning("Please draw your signature in the box above.")
+        elif not agreed:
+            st.warning("Please confirm that you agree to take part.")
+        else:
+            signed_at = datetime.now()
+            with st.spinner("Saving your consent form..."):
+                signed_pdf = build_signed_consent_pdf(
+                    participant_name.strip(), signed_at, signature_png
+                )
+                record = archive_consent_pdf(
+                    signed_pdf,
+                    f"consent_{st.session_state.session_id}_"
+                    f"{signed_at.strftime('%Y%m%d-%H%M%S')}.pdf",
+                    st.session_state.session_id,
+                )
+            st.session_state.consent = {
+                "signed_at": signed_at.isoformat(),
+                "record": record,
+                "pdf": signed_pdf,
+            }
+            st.session_state.step = "pre_test"
+            st.rerun()
+
 # ----------------- Phase 1: Pre-Test Survey -----------------
-if st.session_state.step == "pre_test":
+elif st.session_state.step == "pre_test":
     st.title("Singlish AI Experiment: Pre-Test")
+    if st.session_state.consent.get("pdf"):
+        st.success("Thank you - your consent form has been recorded.")
+        st.download_button(
+            "Download your signed consent form",
+            data=st.session_state.consent["pdf"],
+            file_name=f"consent_{st.session_state.session_id}.pdf",
+            mime="application/pdf",
+        )
     st.markdown("Please answer these quick questions before interacting with the system.")
 
     with st.form("pre_test_form"):
