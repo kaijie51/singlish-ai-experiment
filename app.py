@@ -208,6 +208,9 @@ def render_consent_preview(scale: float = 1.8) -> list[bytes]:
     """
     document = pdfium.PdfDocument(str(CONSENT_TEMPLATE))
     try:
+        # Without init_forms the filled AcroForm values - the investigator's
+        # name and the ticked task boxes - render as blanks.
+        document.init_forms()
         pages = []
         for page in document:
             buffer = io.BytesIO()
@@ -261,6 +264,27 @@ def _drop_participant_form_fields(writer: PdfWriter, page) -> None:
             )
 
 
+def flatten_pdf(pdf_bytes: bytes) -> bytes:
+    """Bake form field values into page content, leaving no interactive fields.
+
+    The template's filled fields - the investigator's name, the ticked task
+    boxes - live as AcroForm values that only form-aware viewers draw. Flattening
+    turns them into ordinary page content so the archived consent record renders
+    identically everywhere and can no longer be edited.
+    """
+    document = pdfium.PdfDocument(pdf_bytes)
+    try:
+        document.init_forms()
+        for index in range(len(document)):
+            # Re-fetch each page by index: flattening invalidates page handles.
+            document[index].flatten()
+        buffer = io.BytesIO()
+        document.save(buffer)
+        return buffer.getvalue()
+    finally:
+        document.close()
+
+
 def build_signed_consent_pdf(participant_name: str, signed_on: datetime,
                              signature_png: bytes) -> bytes:
     """Stamp the participant's name, signature, and date onto page 4 of the
@@ -306,7 +330,7 @@ def build_signed_consent_pdf(participant_name: str, signed_on: datetime,
 
     signed_buffer = io.BytesIO()
     writer.write(signed_buffer)
-    return signed_buffer.getvalue()
+    return flatten_pdf(signed_buffer.getvalue())
 
 
 def archive_consent_pdf(pdf_bytes: bytes, filename: str, session_id: str) -> str:
