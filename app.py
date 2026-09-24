@@ -222,22 +222,34 @@ def render_consent_preview(scale: float = 1.8) -> list[bytes]:
 
 
 def signature_to_png(image_data) -> bytes | None:
-    """Convert the drawable-canvas RGBA array into a tightly cropped PNG.
+    """Crop the drawable-canvas output to the ink and return it as a PNG.
 
-    Returns None when the canvas holds no strokes, which is how an empty
-    signature is detected: the canvas background is fully transparent, so any
-    non-zero alpha means the participant actually drew something.
+    Ink is a pixel that is both opaque and darker than the paper. Testing both
+    is what makes this independent of the canvas background: on a transparent
+    canvas the empty area fails the opacity test, and on the white canvas used
+    here it fails the darkness test. Returns None for an untouched canvas.
+
+    The returned PNG is transparent outside the strokes so that stamping it
+    onto the consent form does not paint a box over the printed signature rule.
     """
     if image_data is None:
         return None
 
-    image = Image.fromarray(np.asarray(image_data, dtype=np.uint8), mode="RGBA")
-    bbox = image.getchannel("A").getbbox()
-    if bbox is None:
+    pixels = np.asarray(image_data, dtype=np.uint8)
+    ink = (pixels[..., 3] > 0) & (pixels[..., :3].mean(axis=2) < 200)
+    if not ink.any():
         return None
 
+    rows, columns = np.nonzero(ink)
+    top, bottom = rows.min(), rows.max() + 1
+    left, right = columns.min(), columns.max() + 1
+
+    cropped = np.zeros((bottom - top, right - left, 4), dtype=np.uint8)
+    cropped[..., :3] = pixels[top:bottom, left:right, :3]
+    cropped[..., 3] = np.where(ink[top:bottom, left:right], 255, 0)
+
     buffer = io.BytesIO()
-    image.crop(bbox).save(buffer, format="PNG")
+    Image.fromarray(cropped, mode="RGBA").save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -420,12 +432,13 @@ if st.session_state.step == "consent":
     st.caption(f"Date: {datetime.now().strftime('%d %b %Y')}")
 
     st.markdown("**Draw your signature in the box below**")
-    # background_color defaults to transparent, so the returned alpha channel
-    # contains only the participant's strokes - that is what signature_to_png()
-    # crops to, and how an untouched canvas is told apart from a signed one.
+    # An opaque white canvas, not the transparent default: participants whose
+    # browser is in dark mode would otherwise be drawing near-black ink onto a
+    # dark page and see nothing.
     signature_canvas = st_canvas(
         stroke_width=3,
         stroke_color="#111111",
+        background_color="#FFFFFF",
         height=150,
         width=600,
         drawing_mode="freedraw",
