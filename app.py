@@ -4,7 +4,7 @@ import io
 import json
 import smtplib
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -38,6 +38,13 @@ CONSENT_TEMPLATE = Path(__file__).parent / "IRB Forms" / "IRB-Tan_Kai_Jie_Templa
 # Signed copies that could not be emailed land here so a consent record is
 # never lost just because the network or the mail server was unavailable.
 LOCAL_CONSENT_FALLBACK = Path(__file__).parent / "signed_consents"
+
+# Every timestamp the study records - the date signed onto the consent form,
+# the results-sheet timestamps - is Singapore time. A bare datetime.now() follows
+# the host clock, which is UTC on Streamlit Community Cloud and would date a
+# form signed after 8am SGT to the previous day. A fixed offset is exact here:
+# Singapore has been UTC+8 with no daylight saving since 1982.
+SINGAPORE_TIME = timezone(timedelta(hours=8), "SGT")
 
 # Signed consent forms are emailed to the researcher as PDF attachments.
 # Gmail's SMTP takes an App Password, which needs no OAuth consent screen and
@@ -364,7 +371,7 @@ def archive_consent_pdf(pdf_bytes: bytes, filename: str, session_id: str) -> str
         message["To"] = config["recipient"]
         message.set_content(
             f"Participant {session_id} signed the consent form on "
-            f"{datetime.now().strftime('%d %b %Y at %H:%M')}.\n\n"
+            f"{datetime.now(SINGAPORE_TIME).strftime('%d %b %Y at %H:%M')}.\n\n"
             "The signed form is attached."
         )
         message.add_attachment(
@@ -389,7 +396,7 @@ def save_data_to_gsheet(post_data):
     worksheet = get_results_worksheet()
     worksheet.append_row([
         st.session_state.session_id,
-        datetime.now().isoformat(),
+        datetime.now(SINGAPORE_TIME).isoformat(),
         st.session_state.consent.get("signed_at"),
         st.session_state.consent.get("record"),
         st.session_state.pre_test_data.get("age"),
@@ -429,7 +436,7 @@ if st.session_state.step == "consent":
     st.subheader("Sign to take part")
 
     participant_name = st.text_input("Your full name (as you would sign it)")
-    st.caption(f"Date: {datetime.now().strftime('%d %b %Y')}")
+    st.caption(f"Date: {datetime.now(SINGAPORE_TIME).strftime('%d %b %Y')}")
 
     st.markdown("**Draw your signature in the box below**")
     # An opaque white canvas, not the transparent default: participants whose
@@ -464,7 +471,7 @@ if st.session_state.step == "consent":
         elif not agreed:
             st.warning("Please confirm that you agree to take part.")
         else:
-            signed_at = datetime.now()
+            signed_at = datetime.now(SINGAPORE_TIME)
             with st.spinner("Saving your consent form..."):
                 signed_pdf = build_signed_consent_pdf(
                     participant_name.strip(), signed_at, signature_png
