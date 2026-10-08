@@ -87,7 +87,7 @@ PARTICIPANT_FORM_FIELDS = {"Name of Participant", "Signature", "Date"}
 SHEET_HEADER = [
     "session_id", "timestamp", "consent_signed_at", "consent_record",
     "age", "gender", "grew_up_in_singapore", "frequency_singlish",
-    "used_singlish_chatbot", "chatbot_name",
+    "used_singlish_chatbot",
     "chatbot_naturalness", "chatbot_grammar_syntax", "chatbot_vocabulary_context",
     "chatbot_comments",
     "overall_opinion",
@@ -565,10 +565,6 @@ elif st.session_state.step == "pre_test":
     chatbot = {}
     if used_singlish_chatbot == "Yes":
         st.markdown("Think about the chatbot you remember best when answering.")
-        chatbot["name"] = st.text_input(
-            "Which chatbot was it? (optional)",
-            placeholder="e.g. ChatGPT, a company's customer service bot",
-        )
         chatbot["naturalness"] = st.slider(
             "Naturalness: Did it sound like a real person or a bot? "
             "(1 = Completely forced/unnatural, 5 = Very natural)",
@@ -605,7 +601,6 @@ elif st.session_state.step == "pre_test":
                 "grew_up_in_singapore": grew_up_in_singapore,
                 "frequency_singlish": frequency_singlish,
                 "used_singlish_chatbot": used_singlish_chatbot,
-                "chatbot_name": chatbot.get("name", "").strip(),
                 "chatbot_naturalness": chatbot.get("naturalness"),
                 "chatbot_grammar_syntax": chatbot.get("grammar_syntax"),
                 "chatbot_vocabulary_context": chatbot.get("vocabulary_context"),
