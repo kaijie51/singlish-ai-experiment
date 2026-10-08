@@ -465,7 +465,7 @@ if st.session_state.step == "consent":
     st.markdown("---")
     st.subheader("Sign to take part")
 
-    participant_name = st.text_input("Your full name (as you would sign it)")
+    participant_name = st.text_input("Your full name")
     st.caption(f"Date: {datetime.now(SINGAPORE_TIME).strftime('%d %b %Y')}")
 
     st.markdown("**Draw your signature in the box below**")
