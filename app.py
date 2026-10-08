@@ -87,7 +87,6 @@ PARTICIPANT_FORM_FIELDS = {"Name of Participant", "Signature", "Date"}
 SHEET_HEADER = [
     "session_id", "timestamp", "consent_signed_at", "consent_record",
     "age", "gender", "grew_up_in_singapore", "frequency_singlish",
-    "ai_singlish_belief",
     "used_singlish_chatbot", "chatbot_name",
     "chatbot_naturalness", "chatbot_grammar_syntax", "chatbot_vocabulary_context",
     "chatbot_comments",
@@ -556,11 +555,6 @@ elif st.session_state.step == "pre_test":
         min_value=1, max_value=5, value=4,
         help="1 = Never, 5 = Always"
     )
-    ai_singlish_belief = st.slider(
-        "Do you believe current AI models can communicate in natural, authentic Singlish?",
-        min_value=1, max_value=5, value=3,
-        help="1 = Strongly Disagree, 5 = Strongly Agree"
-    )
 
     st.markdown("---")
     st.subheader("Your experience with Singlish-speaking AI chatbots")
@@ -612,7 +606,6 @@ elif st.session_state.step == "pre_test":
                 "gender": gender,
                 "grew_up_in_singapore": grew_up_in_singapore,
                 "frequency_singlish": frequency_singlish,
-                "ai_singlish_belief": ai_singlish_belief,
                 "used_singlish_chatbot": used_singlish_chatbot,
                 "chatbot_name": chatbot.get("name", "").strip(),
                 "chatbot_naturalness": chatbot.get("naturalness"),
