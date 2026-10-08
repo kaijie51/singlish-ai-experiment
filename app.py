@@ -545,15 +545,13 @@ elif st.session_state.step == "pre_test":
         options=["Male", "Female"],
     )
     grew_up_in_singapore = st.radio(
-        "Did you grow up in Singapore?",
+        "Did you grow up in Singapore? (i.e. you spent at least 10 years of your "
+        "childhood and/or teenage years living in Singapore)",
         options=["Yes", "No"],
-        help="Growing up in Singapore means having spent at least 10 years of your "
-             "childhood and/or teenage years living in Singapore."
     )
     frequency_singlish = st.slider(
-        "How often do you speak or text in Singlish daily?",
+        "How often do you speak or text in Singlish daily? (1 = Never, 5 = Always)",
         min_value=1, max_value=5, value=4,
-        help="1 = Never, 5 = Always"
     )
 
     st.markdown("---")
@@ -572,19 +570,19 @@ elif st.session_state.step == "pre_test":
             placeholder="e.g. ChatGPT, a company's customer service bot",
         )
         chatbot["naturalness"] = st.slider(
-            "Naturalness: Did it sound like a real person or a bot?",
+            "Naturalness: Did it sound like a real person or a bot? "
+            "(1 = Completely forced/unnatural, 5 = Very natural)",
             1, 5, 3,
-            help="1 = Completely forced/unnatural, 5 = Very natural"
         )
         chatbot["grammar_syntax"] = st.slider(
-            "Syntax & Structure: Did it use proper sentence structure and word placement (e.g., correct 'lah'/'leh')?",
+            "Syntax & Structure: Did it use proper sentence structure and word placement "
+            "(e.g., correct 'lah'/'leh')? (1 = Inaccurate/Awkward placement, 5 = Accurate usage)",
             1, 5, 3,
-            help="1 = Inaccurate/Awkward placement, 5 = Accurate usage"
         )
         chatbot["vocabulary_context"] = st.slider(
-            "Vocabulary & Nuance: Was the local slang and cultural context appropriate?",
+            "Vocabulary & Nuance: Was the local slang and cultural context appropriate? "
+            "(1 = Inappropriate/Cringe, 5 = Accurate & Nuanced)",
             1, 5, 3,
-            help="1 = Inappropriate/Cringe, 5 = Accurate & Nuanced"
         )
         chatbot["comments"] = st.text_area(
             "Anything else about its Singlish that stood out to you? (optional)"
@@ -592,9 +590,9 @@ elif st.session_state.step == "pre_test":
 
     st.markdown("---")
     overall_opinion = st.slider(
-        "Final Take: Do you think AI can speak Singlish convincingly?",
+        "Final Take: Do you think AI can speak Singlish convincingly? "
+        "(1 = Strongly Disagree, 5 = Strongly Agree)",
         1, 5, 3,
-        help="1 = Strongly Disagree, 5 = Strongly Agree"
     )
 
     if st.button("Submit", type="primary"):
