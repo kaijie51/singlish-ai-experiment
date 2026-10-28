@@ -731,7 +731,7 @@ elif st.session_state.step == "pre_test":
 #             help="1 = Inappropriate/Cringe, 5 = Accurate & Nuanced"
 #         )
 #         overall_opinion = st.slider(
-#             "Final Take: Do you think AI can speak Singlish convincingly?",
+#             "Convincingness: Do you think AI can speak Singlish convincingly?",
 #             1, 5, 3,
 #             help="1 = Strongly Disagree, 5 = Strongly Agree"
 #         )
