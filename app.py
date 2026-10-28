@@ -586,7 +586,7 @@ elif st.session_state.step == "pre_test":
 
     st.markdown("---")
     overall_opinion = st.slider(
-        "Final Take: Do you think AI can speak Singlish convincingly? "
+        "Convincingness: Do you think AI can speak Singlish convincingly? "
         "(1 = Strongly Disagree, 5 = Strongly Agree)",
         1, 5, 3,
     )
